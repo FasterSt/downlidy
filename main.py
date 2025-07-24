@@ -80,7 +80,7 @@ def main(page: ft.Page):
                 result_row
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=10
+            # spacing=10
         )
     )
 

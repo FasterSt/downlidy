@@ -1,4 +1,5 @@
 import threading
+import traceback
 import flet as ft
 from yt_dlp import YoutubeDL
 
@@ -13,6 +14,7 @@ def yt_downloader(
     best_formats = {}
     best_audio_formats = {}
     selected_format = None
+    # url_video = 'https://www.youtube.com/watch?v=TJdUMH5FR6s&pp=ugUIEgZlcy00MTk%3D'
 
     def ok_click(e):
         page.close(warning_dialog)
@@ -131,17 +133,29 @@ def yt_downloader(
                 thumbnail = ft.Image(
                     src=video_info.get('thumbnail', ""),
                     width=320,
-                    height=128,
+                    height=180,
                     fit=ft.ImageFit.CONTAIN,
                 )
 
 
-                list_videos = [f for f in video_info['formats'] if f.get('vcodec') != 'none']
-                list_audios = [f for f in video_info['formats'] if f.get('acodec') != 'none' and (not f.get('vcodec') or f.get('vcodec') == 'none')]
+                list_videos = [
+                        f for f in video_info['formats'] 
+                        if f.get('vcodec') != 'none'
+                        and f.get('acodec') == 'none'
+                        and f.get('protocol') == 'https'
+                        and not f.get('has_drm')
+                    ]
+                list_audios = [
+                        f for f in video_info['formats'] 
+                        if f.get('acodec') != 'none' 
+                        and f.get('vcodec') == 'none'
+                        and f.get('protocol') == 'https'
+                        and not f.get('has_drm')
+                    ]
 
                 filtered_videos = [
                     f for f in list_videos
-                    if f.get('fps') in [30, 60]
+                    if f.get('fps') is not None and f['fps'] >= 23.976
                 ]
 
                 filtered_audios = [
@@ -150,42 +164,50 @@ def yt_downloader(
                     and f.get('abr') >= 128 and f.get('abr') <= 256
                 ]
 
+                # print(filtered_audios)
                 print("ya pase el filtro de videos")
                 for a in filtered_audios:
                     key = a['ext']
                     current_best = best_audio_formats.get(key)
 
-                    if (not current_best 
-                        or ((a.get('tbr', 0) >= current_best.get('tbr', 0)) 
-                        and a['quality'] >= current_best['quality'])
-                        and a['language'] == 'es'
+                    if (
+                        not current_best 
+                        or a.get('language_preference', -1) > current_best.get('language_preference', -1)
+                        or (
+                            a.get('language_preference', -1) == current_best.get('language_preference', -1)
+                            and a.get('tbr', 0) > current_best.get('tbr', 0)
+                        )
                         ):
                         best_audio_formats[key] = a
                 
-                print("Ya pasé el filtro de audio")
+                print(list_videos)
+                # print(f"Best audio formats: {best_audio_formats}")
                 for f in filtered_videos:
                     key = (f['height'], f['ext'])
                     current_best = best_formats.get(key)
+                    calculate_size = lambda x: ((x['tbr'] + f['tbr']) * duration / (8 * 1024)) if x.get('tbr') else 0
 
                     if not current_best or (f.get('tbr', 0) > current_best.get('tbr', 0)):
-                        if f['ext'] == 'mp4':
-                            f['audio_format'] = best_audio_formats['m4a'] if 'm4a' in best_audio_formats else None
-                        elif f['ext'] == 'webm':
+                        if f['ext'] == 'webm' and best_audio_formats.get('webm') is not None:
                             f['audio_format'] = best_audio_formats['webm'] if 'webm' in best_audio_formats else None
-                                                        
-                        f['video_size_approx'] = (
-                            (a['tbr'] + f['tbr']) * duration / (8 * 1024) 
-                            if a.get('tbr') is not None and f.get('tbr') is not None 
-                            else 0
-                        )
+                            f['video_size_approx'] = calculate_size(best_audio_formats['webm'])
+                        
+                        elif best_audio_formats.get('m4a') is not None:
+                            f['audio_format'] = best_audio_formats['m4a']
+                            f['video_size_approx'] = calculate_size(best_audio_formats['m4a'])
+                        
+                        else:
+                            f['audio_format'] = None
+                            f['video_size_approx'] = 0
+
                         best_formats[key] = f
                 
                 print("Pass for best formats")
                 # print(duration)
-                # print(best_formats)
+                print(best_formats)
 
                 list_formats = set({ext for (_, ext) in best_formats})
-                print(f"#Selected: {selected_format}")
+                # print(f"#Selected: {best_formats[(480, 'mp4')]}")
 
                 vquality_dropdown.options.append(
                     ft.dropdown.Option(
@@ -211,47 +233,59 @@ def yt_downloader(
                     )
                 result_row.controls.clear()
                 result_row.controls.append(
-                        ft.Row(
+                    ft.Container(
+                        margin=0,
+                        padding=0,
+                        # border=ft.border.all(1, ft.Colors.GREEN_300),
+                        expand=True,
+                        content=ft.Row(
                             controls=[
-                                thumbnail,
-                                ft.Column(
-                                    controls=[
-                                        ft.Row(
-                                            controls=[
-                                                format_dropdown,
-                                                vquality_dropdown,
-                                            ]
-                                        ),
-                                        ft.ElevatedButton(
-                                            "Download",
-                                            width=200,
-                                            icon=ft.Icons.DOWNLOAD,
-                                            on_click=download_video
-                                        ),
-                                    ],
-                                    alignment=ft.MainAxisAlignment.START,
-                                    spacing=5,
+                                ft.Container(
+                                    content=thumbnail,
+                                ),
+                                ft.Container(
+                                    content=ft.Column(
+                                        controls=[
+                                            ft.Row(
+                                                controls=[
+                                                    format_dropdown,
+                                                    vquality_dropdown,
+                                                ]
+                                            ),
+                                            ft.ElevatedButton(
+                                                "Download",
+                                                width=200,
+                                                icon=ft.Icons.DOWNLOAD,
+                                                on_click=download_video,
+                                            ),
+                                        ],
+                                        # spacing=5,
+                                        alignment=ft.MainAxisAlignment.START,
+                                    ),
+                                    padding=0,
+                                    margin=0,
                                 )
                             ],
                             alignment=ft.MainAxisAlignment.CENTER,
-                            expand=True
-                        ),
-
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        )
                     )
+                )
 
                 (selct_heigth, selct_ext), video = next(iter(best_formats.items()))
                 # vquality_dropdown.value = f"{selct_heigth}p.{selct_ext}"
                 print(f"{video['resolution']}p, {video.get('fps', '?')}fps.{ext} ({video['audio_format']['tbr']}kbps) (~{video['video_size_approx']: .2f}Mb approx")
                 # page.update()
             except Exception as ex:
-                print(f"Error fetching video info: {ex}")
-                info_txt.value = f"Error: {ex}"
+                print("Error fetching video info:")
+                traceback.print_exc()
+                info_txt.value = f"Error: {type(ex).__name__}: {ex}"
 
             page.update()
 
 
     # components
-    vquality_dropdown = ft.Dropdown(label="Select Quality", width=200)
+    vquality_dropdown = ft.Dropdown(label="Select Quality", width=200, on_change=lambda e: print(f"Selected quality: {best_formats[eval(e.control.value)]['tbr']}"))
     aquality_dropdown = ft.Dropdown(label="Select Audio Quality", width=400)
     format_dropdown = ft.Dropdown(label="Select Format", width=200, on_change=handle_format_change)
 
